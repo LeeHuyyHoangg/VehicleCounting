@@ -1,19 +1,17 @@
-
 # Import necessary packages
+import copy
 
 import cv2
 import csv
 import collections
 import numpy as np
 from tracker import *
+import sys
 
 # Initialize Tracker
 tracker = EuclideanDistTracker()
 
-# Initialize the videocapture object
-cap = cv2.VideoCapture('29.mov')
-input_size = 320
-
+# Detection confidence threshold
 # Detection confidence threshold
 confThreshold = 0.2
 nmsThreshold = 0.2
@@ -30,8 +28,8 @@ down_line_position = middle_line_position + 15
 # Store Coco Names in a list
 classesFile = "coco.names"
 classNames = open(classesFile).read().strip().split('\n')
-print(classNames)
-print(len(classNames))
+# print(classNames)
+# print(len(classNames))
 
 # class index for our required detection classes
 required_class_index = [2, 3, 5, 7]
@@ -70,6 +68,13 @@ temp_down_list = []
 up_list = [0, 0, 0, 0]
 down_list = [0, 0, 0, 0]
 
+# function for refreshment
+# def refresh():
+#     global temp_up_list, temp_down_list, up_list, down_list
+#     temp_up_list = []
+#     temp_down_list = []
+#     up_list = [0, 0, 0, 0]
+#     down_list = [0, 0, 0, 0]
 
 # Function for count vehicle
 def count_vehicle(box_id, img):
@@ -129,20 +134,21 @@ def postProcess(outputs, img):
     # Apply Non-Max Suppression
     indices = cv2.dnn.NMSBoxes(boxes, confidence_scores, confThreshold, nmsThreshold)
     # print(classIds)
-    for i in indices.flatten():
-        x, y, w, h = boxes[i][0], boxes[i][1], boxes[i][2], boxes[i][3]
-        # print(x,y,w,h)
+    if len(indices) > 0:
+        for i in indices.flatten():
+            x, y, w, h = boxes[i][0], boxes[i][1], boxes[i][2], boxes[i][3]
+            # print(x,y,w,h)
 
-        color = [int(c) for c in colors[classIds[i]]]
-        name = classNames[classIds[i]]
-        detected_classNames.append(name)
-        # Draw classname and confidence score 
-        cv2.putText(img, f'{name.upper()} {int(confidence_scores[i] * 100)}%',
-                    (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+            color = [int(c) for c in colors[classIds[i]]]
+            name = classNames[classIds[i]]
+            detected_classNames.append(name)
+            # Draw classname and confidence score
+            cv2.putText(img, f'{name.upper()} {int(confidence_scores[i] * 100)}%',
+                        (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
 
-        # Draw bounding rectangle
-        cv2.rectangle(img, (x, y), (x + w, y + h), color, 1)
-        detection.append([x, y, w, h, required_class_index.index(classIds[i])])
+            # Draw bounding rectangle
+            cv2.rectangle(img, (x, y), (x + w, y + h), color, 1)
+            detection.append([x, y, w, h, required_class_index.index(classIds[i])])
 
     # Update the tracker for each object
     boxes_ids = tracker.update(detection)
@@ -150,10 +156,22 @@ def postProcess(outputs, img):
         count_vehicle(box_id, img)
 
 
-def from_video():
+def from_video(cap, input_size):
     i = 0
+    isMsgShown = False
+
     while True:
         success, img = cap.read()
+
+        # handling invalid filenames
+        if img is None:
+            print('Provided file name is either non-existent or invalid!')
+            return
+
+        if not isMsgShown:
+            print('<!!!> Hit \'Q\' button to quit <!!!>')
+            isMsgShown = True
+
         img = cv2.resize(img, (0, 0), None, 0.5, 0.5)
         ih, iw, channels = img.shape
         blob = cv2.dnn.blobFromImage(img, 1 / 255, (input_size, input_size), [0, 0, 0], 1, crop=False)
@@ -190,6 +208,8 @@ def from_video():
         cv2.imshow('Output', img)
 
         if cv2.waitKey(1) == ord('q'):
+            cap.release()
+            cv2.destroyAllWindows()
             break
 
     # Write the vehicle counting information in a file and save it
@@ -208,27 +228,37 @@ def from_video():
     cv2.destroyAllWindows()
 
 
-image_file = 'maxresdefault.jpg'
+# function to print out the frequency of each genre of vehicle in an image or frame
+def print_count(f):
+    print('-- Vehicle counted --')
+    print('car: ', f['car'])
+    print('bus: ', f['bus'])
+    print('motorbike: ', f['motorbike'])
+    print('truck: ', f['truck'])
 
 
-def from_static_image(image):
+def from_static_image(image, input_size):
     img = cv2.imread(image)
+    if img is None:
+        print('Provided file name is either non-existent or invalid!')
+        return
 
     blob = cv2.dnn.blobFromImage(img, 1 / 255, (input_size, input_size), [0, 0, 0], 1, crop=False)
 
     # Set the input of the network
     net.setInput(blob)
     layersNames = net.getLayerNames()
-    outputNames = [(layersNames[i-1]) for i in net.getUnconnectedOutLayers()]
+    outputNames = [(layersNames[i - 1]) for i in net.getUnconnectedOutLayers()]
     # Feed data to the network
     outputs = net.forward(outputNames)
-
-    # Find the objects from the network output
     postProcess(outputs, img)
 
     # count the frequency of detected classes
     frequency = collections.Counter(detected_classNames)
-    print(frequency)
+
+    # print out the frequency
+    print_count(frequency)
+
     # Draw counting texts in the frame
     cv2.putText(img, "Car:        " + str(frequency['car']), (20, 40), cv2.FONT_HERSHEY_SIMPLEX, font_size, font_color,
                 font_thickness)
@@ -239,7 +269,7 @@ def from_static_image(image):
     cv2.putText(img, "Truck:      " + str(frequency['truck']), (20, 100), cv2.FONT_HERSHEY_SIMPLEX, font_size,
                 font_color, font_thickness)
 
-    cv2.imshow("image", img)
+    cv2.imshow("Output image", img)
 
     cv2.waitKey(0)
 
@@ -249,7 +279,141 @@ def from_static_image(image):
         cwriter.writerow([image, frequency['car'], frequency['motorbike'], frequency['bus'], frequency['truck']])
     f1.close()
 
+def from_webcam(cap, input_size):
+    i = 0
+    isMsgShown = False
+    temp = collections.Counter([]);
+
+    while True:
+        success, img = cap.read()
+
+        # handling invalid filenames
+        if img is None:
+            print('Provided file name is either non-existent or invalid!')
+            return
+
+        if not isMsgShown:
+            print('<!!!> Hit \'Q\' button to quit <!!!>')
+            isMsgShown = True
+
+        img = cv2.resize(img, (0, 0), None, 1.5, 1.5)
+        ih, iw, channels = img.shape
+        blob = cv2.dnn.blobFromImage(img, 1 / 255, (input_size, input_size), [0, 0, 0], 1, crop=False)
+
+        # Set the input of the network
+        net.setInput(blob)
+        layersNames = net.getLayerNames()
+        outputNames = [(layersNames[i - 1]) for i in net.getUnconnectedOutLayers()]
+        # Feed data to the network
+        outputs = net.forward(outputNames)
+
+        # Find the objects from the network output
+        postProcess(outputs, img)
+
+        # count the frequency of detected classes
+        frequency = collections.Counter(detected_classNames)
+
+        # print out the frequency
+        print_count(frequency)
+
+        # Draw counting texts in the frame
+        cv2.putText(img, "Car:        " + str(frequency['car'] - temp['car']), (20, 40), cv2.FONT_HERSHEY_SIMPLEX, font_size,
+                    font_color,
+                    font_thickness)
+        cv2.putText(img, "Motorbike:  " + str(frequency['motorbike'] - temp['motorbike']), (20, 60), cv2.FONT_HERSHEY_SIMPLEX, font_size,
+                    font_color, font_thickness)
+        cv2.putText(img, "Bus:        " + str(frequency['bus'] - temp['bus']), (20, 80), cv2.FONT_HERSHEY_SIMPLEX, font_size,
+                    font_color,
+                    font_thickness)
+        cv2.putText(img, "Truck:      " + str(frequency['truck'] - temp['truck']), (20, 100), cv2.FONT_HERSHEY_SIMPLEX, font_size,
+                    font_color, font_thickness)
+
+        temp = copy.deepcopy(frequency);
+
+        # Show the frames
+        cv2.imshow('Output', img)
+
+        if cv2.waitKey(1) == ord('q'):
+            break
+
+    # Write the vehicle counting information in a file and save it
+
+    with open("data.csv", 'w') as f1:
+        cwriter = csv.writer(f1)
+        cwriter.writerow(['Direction', 'car', 'motorbike', 'bus', 'truck'])
+        up_list.insert(0, "Up")
+        down_list.insert(0, "Down")
+        cwriter.writerow(up_list)
+        cwriter.writerow(down_list)
+    f1.close()
+    # print("Data saved at 'data.csv'")
+    # Finally realese the capture object and destroy all active windows
+    cap.release()
+    cv2.destroyAllWindows()
+
+def print_menu():
+    print('--------- Vehicle counting AI simulations ---------')
+    print('<0> Exit')
+    print('<1> Input an image')
+    print('<2> Input a video')
+    print('<3> Input webcam')
+
+
+def handle_image(input_size):
+    # fetch user's input
+    image_file = input('Please enter the name of input image file (including its extensions):')
+    print('Handling input image...')
+
+    # start detecting
+    from_static_image(image_file, input_size)
+
+
+def handle_video(input_size):
+    # fetch user's input
+    video_file = input('Please enter the name of input video file (including its extensions):')
+
+    # Initialize the video capture object
+    cap = cv2.VideoCapture(video_file)
+
+    # start detecting
+    print('Handling input video...')
+    from_video(cap, input_size)
+
+def handle_webcam(input_size):
+    # Initialize the video capture object (zero means webcam)
+    cap = cv2.VideoCapture(0)
+
+    # start detecting
+    print('Handling webcam...')
+    from_webcam(cap, input_size)
 
 if __name__ == '__main__':
-    from_video()
-    # from_static_image(image_file)
+    # fix input size for user's convenience
+    input_size = 320
+
+    while True:
+        # refresh()
+        print_menu()
+        option = ''
+        try:
+            option = int(input('Please make your preferred choice by entering the corresponding number: '))
+        except:
+            print('<!!!> Invalid input. Please enter a number!')
+            continue
+        # Check what choice was entered and act accordingly
+        if option == 1:
+            handle_image(input_size)
+        elif option == 2:
+            handle_video(input_size)
+        elif option == 3:
+            try:
+                handle_webcam(input_size)
+            except OSError:
+                print('<!!!> No webcam or accessories detected! <!!!>')
+            except:
+                print('<!!!> Something went wrong with your webcam! <!!!>')
+        elif option == 0:
+            print('Thank you! Program exiting...')
+            exit()
+        else:
+            print('<!!!> Invalid option. Please enter a number between 1 and 2. <!!!>')
